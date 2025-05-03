@@ -1,39 +1,88 @@
-# This starter workflow is for a CMake project running on a single platform. There is a different starter workflow if you need cross-platform coverage.
-# See: https://github.com/actions/starter-workflows/blob/main/ci/cmake-multi-platform.yml
-name: CMake on a single platform
+name: 6release
 
-on:
+on: 
   push:
-    branches: [ "master" ]
-  pull_request:
-    branches: [ "master" ]
 
 env:
   # Customize the CMake build type here (Release, Debug, RelWithDebInfo, etc.)
   BUILD_TYPE: Release
 
 jobs:
-  build:
-    # The CMake configure and build commands are platform agnostic and should work equally well on Windows or Mac.
-    # You can convert this to a matrix build if you need cross-platform coverage.
-    # See: https://docs.github.com/en/free-pro-team@latest/actions/learn-github-actions/managing-complex-workflows#using-a-build-matrix
+  create_release:
     runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: '${{ github.ref }}'
+        release_name: 'Release ${{ github.ref }}'
+        draft: false
+        prerelease: false
+    outputs:
+      UPLOAD_URL: ${{ steps.create_release.outputs.upload_url }}
+
+  publish:
+    needs: [create_release]
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v2
 
-    - name: Configure CMake
-      # Configure CMake in a 'build' subdirectory. `CMAKE_BUILD_TYPE` is only required if you are using a single-configuration generator such as make.
-      # See https://cmake.org/cmake/help/latest/variable/CMAKE_BUILD_TYPE.html?highlight=cmake_build_type
-      run: cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
+    - name: build32 environment create
+      run: cmake -E make_directory ${{github.workspace}}/build32
 
-    - name: Build
-      # Build your program with the given configuration
-      run: cmake --build ${{github.workspace}}/build --config ${{env.BUILD_TYPE}}
+    - name: build32 Configure CMake
+      shell: bash
+      working-directory: ${{github.workspace}}/build32
+      run: cmake $GITHUB_WORKSPACE -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DSO_64=OFF -G "CodeBlocks - Unix Makefiles"
 
-    - name: Test
-      working-directory: ${{github.workspace}}/build
-      # Execute tests defined by the CMake configuration.
-      # See https://cmake.org/cmake/help/latest/manual/ctest.1.html for more detail
-      run: ctest -C ${{env.BUILD_TYPE}}
+    - name: build32 build
+      working-directory: ${{github.workspace}}/build32
+      shell: bash
+      run: cmake --build . --config $BUILD_TYPE
 
+    - name: build64 environment create
+      run: cmake -E make_directory ${{github.workspace}}/build64
+
+    - name: build64 Configure CMake
+      shell: bash
+      working-directory: ${{github.workspace}}/build64
+      run: cmake $GITHUB_WORKSPACE -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DSO_64=ON -G "CodeBlocks - Unix Makefiles"
+
+    - name: build64 build
+      working-directory: ${{github.workspace}}/build64
+      shell: bash
+      run: cmake --build . --config $BUILD_TYPE
+
+
+    - name: Name Format
+      id: release_name_format
+      if: ${{ runner.os == 'Windows' }}
+      run: echo "::set-output name=format::.exe"
+
+    - name: Upload build 32
+      uses: actions/upload-release-asset@v1.0.2
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: '${{ needs.create_release.outputs.UPLOAD_URL }}'
+        asset_path: '${{ github.workspace }}/build32/SoFixer32${{ steps.release_name_format.outputs.format }}'
+        asset_name: 'SoFixer-${{ runner.os }}-32${{ steps.release_name_format.outputs.format }}'
+        asset_content_type: application/octet-stream
+
+    - name: Upload build 64
+      uses: actions/upload-release-asset@v1.0.2
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: '${{ needs.create_release.outputs.UPLOAD_URL }}'
+        asset_path: '${{ github.workspace }}/build64/SoFixer64${{ steps.release_name_format.outputs.format }}'
+        asset_name: 'SoFixer-${{ runner.os }}-64${{ steps.release_name_format.outputs.format }}'
+        asset_content_type: application/octet-stream
